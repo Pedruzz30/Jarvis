@@ -13,12 +13,6 @@ from urllib.parse import quote_plus
 import urllib.request as _urllib
 
 try:
-    import yt_dlp
-    YT_DLP_DISPONIVEL = True
-except ImportError:
-    YT_DLP_DISPONIVEL = False
-
-try:
     from playwright.async_api import async_playwright
     PLAYWRIGHT_DISPONIVEL = True
 except ImportError:
@@ -258,6 +252,11 @@ class Assistant(Agent, llm.ToolContext):
         """Busca um arquivo por nome e o abre automaticamente."""
         return self.jarvis_control.buscar_e_abrir_arquivo(nome_arquivo)
 
+    @agents.function_tool
+    async def abrir_arquivo(self, caminho: str):
+        """Abre um arquivo pelo caminho ou nome exato (ex: 'relatorio.pdf', 'Desktop/notas.txt')."""
+        return self.jarvis_control.abrir_arquivo(caminho)
+
     # ────────────────────────────────
     # SISTEMA
     # ────────────────────────────────
@@ -307,7 +306,6 @@ async def entrypoint(ctx: agents.JobContext):
         room=ctx.room,
         agent=agent,
         room_input_options=RoomInputOptions(
-            video_enabled=True,
             noise_cancellation=noise_cancellation.BVC(),
         ),
     )

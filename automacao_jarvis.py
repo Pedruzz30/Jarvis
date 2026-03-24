@@ -219,45 +219,40 @@ class JarvisControl:
 
     def abrir_aplicativo(self, nome_app):
         """Abre um aplicativo no sistema pelo nome."""
+        # Mapeia apelidos para executáveis ou URIs do sistema
+        apps = {
+            "bloco de notas": "notepad.exe",
+            "calculadora": "calc.exe",
+            "paint": "mspaint.exe",
+            "cmd": "cmd.exe",
+            "navegador": "msedge.exe",
+            "word": "winword.exe",
+            "excel": "excel.exe",
+            "powerpoint": "powerpnt.exe",
+            "explorador de arquivos": "explorer.exe",
+            "configuracoes": "ms-settings:",
+        }
         try:
-            apps = {
-                "bloco de notas": "notepad.exe",
-                "calculadora": "calc.exe",
-                "paint": "mspaint.exe",
-                "cmd": "cmd.exe",
-                "navegador": "start msedge",
-                "word": "start winword",
-                "excel": "start excel",
-                "powerpoint": "start powerpnt",
-                "explorador de arquivos": "explorer.exe",
-                "configuracoes": "start ms-settings:"
-            }
-            comando = apps.get(nome_app.lower())
-            if comando:
-                if comando.startswith("start "):
-                    executavel = comando.replace("start ", "", 1).strip()
-                    try: os.startfile(executavel)
-                    except: subprocess.Popen(['cmd', '/c', 'start', '', executavel], shell=True)
-                else:
-                    subprocess.Popen(comando, shell=False)
-                return f"Abrindo {nome_app}."
+            alvo = apps.get(nome_app.strip().lower(), nome_app)
+            # URIs do sistema (ms-settings:, ms-store:, etc.) usam os.startfile
+            if ":" in alvo and not alvo.endswith(".exe"):
+                os.startfile(alvo)
             else:
-                try: os.startfile(nome_app)
-                except: subprocess.Popen(['cmd', '/c', 'start', '', nome_app], shell=True)
-                return f"Tentando abrir {nome_app}."
+                subprocess.Popen([alvo], shell=False)
+            return f"Abrindo {nome_app}."
         except Exception as e:
             return f"Erro ao abrir aplicativo: {str(e)}"
 
     def energia_pc(self, acao):
         try:
             if acao == "desligar":
-                os.system("shutdown /s /t 1")
+                subprocess.run(["shutdown", "/s", "/t", "1"], check=True)
                 return "Desligando o computador."
             elif acao == "reiniciar":
-                os.system("shutdown /r /t 1")
+                subprocess.run(["shutdown", "/r", "/t", "1"], check=True)
                 return "Reiniciando o computador."
             elif acao == "bloquear":
-                subprocess.run(["rundll32.exe", "user32.dll,LockWorkStation"])
+                subprocess.run(["rundll32.exe", "user32.dll,LockWorkStation"], check=True)
                 return "Computador bloqueado."
             return "Ação inválida."
         except Exception as e:
@@ -275,8 +270,6 @@ class JarvisControl:
             return f"Erro ao abrir arquivo: {str(e)}"
 
 if __name__ == "__main__":
-    # Teste rápido de caminhos dinâmicos
     user_home = os.path.expanduser('~')
     print(f"Home do usuário detectada: {user_home}")
     jarvis = JarvisControl()
-    # jarvis.atalhos_navegacao("github")
