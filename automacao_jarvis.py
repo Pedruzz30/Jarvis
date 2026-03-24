@@ -10,13 +10,6 @@ import screen_brightness_control as sbc
 
 class JarvisControl:
     def __init__(self):
-        self.shortcuts = {
-            "youtube": "https://www.youtube.com",
-            "github": "https://www.github.com",
-            "chatgpt": "https://chat.openai.com",
-            "google": "https://www.google.com",
-            "instagram": "https://www.instagram.com"
-        }
         self.home = os.path.expanduser('~')
         self.desktop = os.path.join(self.home, 'Desktop')
         self.documents = os.path.join(self.home, 'Documents')
@@ -254,25 +247,6 @@ class JarvisControl:
                 return f"Tentando abrir {nome_app}."
         except Exception as e:
             return f"Erro ao abrir aplicativo: {str(e)}"
-
-    def atalhos_navegacao(self, site):
-        try:
-            url = self.shortcuts.get(site.lower())
-            if url:
-                os.startfile(url)
-                return f"Abrindo {site}."
-            return "Site não cadastrado."
-        except Exception as e:
-            return f"Erro ao abrir site: {str(e)}"
-
-    def pesquisar_no_google(self, termo):
-        try:
-            import urllib.parse
-            url = f"https://www.google.com/search?q={urllib.parse.quote_plus(termo)}"
-            os.startfile(url)
-            return f"Pesquisando por {termo}."
-        except Exception as e:
-            return f"Erro ao pesquisar: {str(e)}"
 
     def energia_pc(self, acao):
         try:
