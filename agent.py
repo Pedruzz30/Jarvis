@@ -182,9 +182,18 @@ class Assistant(Agent, llm.ToolContext):
 
     @agents.function_tool
     async def abrir_programa(self, comando: str):
-        """Abre um programa ou executável pelo nome ou caminho (ex: 'notepad', 'calc')."""
+        """Abre um programa pelo nome (ex: 'notepad', 'calc', 'explorer'). Apenas executáveis conhecidos."""
+        PROGRAMAS_PERMITIDOS = {
+            "notepad", "calc", "mspaint", "explorer", "cmd", "taskmgr",
+            "control", "regedit", "mmc", "devmgmt.msc", "diskmgmt.msc",
+            "snippingtool", "magnify", "narrator", "osk", "wordpad",
+            "winver", "msconfig", "perfmon", "eventvwr", "services.msc",
+        }
+        nome = comando.strip().lower().removesuffix(".exe")
+        if nome not in PROGRAMAS_PERMITIDOS:
+            return f"Programa '{comando}' não está na lista de permitidos por segurança. Use abrir_aplicativo para apps conhecidos."
         try:
-            subprocess.Popen(comando, shell=True)
+            subprocess.Popen([f"{nome}.exe"], shell=False)
             return f"'{comando}' aberto."
         except Exception as e:
             return f"Erro ao abrir '{comando}': {e}"
@@ -280,8 +289,14 @@ class Assistant(Agent, llm.ToolContext):
 
 async def entrypoint(ctx: agents.JobContext):
 
+    # ── Validação de variáveis de ambiente obrigatórias ──────────────
+    required_vars = ["MEM0_API_KEY", "LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET"]
+    missing = [v for v in required_vars if not os.getenv(v)]
+    if missing:
+        raise RuntimeError(f"Variáveis de ambiente ausentes no .env: {', '.join(missing)}")
+
     mem0_client = AsyncMemoryClient()
-    user_id = "Pedro"
+    user_id = os.getenv("JARVIS_USER_ID", "Pedro")
 
     await ctx.connect()
 
