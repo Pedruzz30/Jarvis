@@ -1,93 +1,144 @@
+
+Copiar
+
 import os
 import shutil
-import webbrowser
-import zipfile
 import subprocess
-from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
+import zipfile
 from ctypes import cast, POINTER
 from comtypes import CLSCTX_ALL
+import comtypes
 import screen_brightness_control as sbc
-
+from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
+ 
+ 
 class JarvisControl:
+ 
     def __init__(self):
-        self.home = os.path.expanduser('~')
-        self.desktop = os.path.join(self.home, 'Desktop')
-        self.documents = os.path.join(self.home, 'Documents')
-        self.downloads = os.path.join(self.home, 'Downloads')
+        self.home = os.path.expanduser("~")
+        self.desktop = os.path.join(self.home, "Desktop")
+        self.documents = os.path.join(self.home, "Documents")
+        self.downloads = os.path.join(self.home, "Downloads")
+ 
+        # Aliases que o modelo pode usar para se referir a pastas base
         self.base_folders = {
             "area de trabalho": self.desktop,
             "área de trabalho": self.desktop,
             "desktop": self.desktop,
             "documentos": self.documents,
             "documents": self.documents,
-            "downloads": self.downloads
+            "downloads": self.downloads,
         }
+ 
+        # Pastas ignoradas durante buscas recursivas
         self.ignore_folders = {
-            "venv", ".venv", "env", "node_modules", "__pycache__", ".git", ".idea", ".vscode"
+            "venv", ".venv", "env", "node_modules",
+            "__pycache__", ".git", ".idea", ".vscode",
         }
-
-    def _resolver_caminho(self, caminho):
-        """Traduz apelidos (como 'Área de Trabalho') para caminhos reais e garante caminhos absolutos."""
-        caminho = caminho.strip('\'"').replace('\\', '/')
+ 
+        # Inicializa o COM uma única vez para uso com pycaw
+        comtypes.CoInitialize()
+ 
+    # ─────────────────────────────────────────
+    # UTILITÁRIOS INTERNOS
+    # ─────────────────────────────────────────
+ 
+    def _resolver_caminho(self, caminho: str) -> str:
+        """
+        Traduz aliases (ex: 'Desktop', 'Documentos') para caminhos reais.
+        Caminhos relativos sem alias são resolvidos a partir do Desktop.
+        """
+        caminho = caminho.strip("'\"").replace("\\", "/")
         caminho_lower = caminho.lower()
-
-        # Verifica se o caminho começa com um dos apelidos (ex: "desktop/pasta" ou "desktop")
+ 
         for alias, real_path in self.base_folders.items():
             if caminho_lower == alias:
                 return real_path
             if caminho_lower.startswith(alias + "/"):
-                # Substitui o alias pelo caminho real no início da string
-                return os.path.abspath(os.path.join(real_path, caminho[len(alias)+1:]))
-        
-        # Se for um caminho relativo simples, assume que é no Desktop por padrão
-        if not os.path.isabs(caminho) and not caminho.startswith('.'):
+                sufixo = caminho[len(alias) + 1:]
+                return os.path.abspath(os.path.join(real_path, sufixo))
+ 
+        # Caminho relativo sem alias → assume Desktop
+        if not os.path.isabs(caminho) and not caminho.startswith("."):
             return os.path.abspath(os.path.join(self.desktop, caminho))
-            
+ 
         return os.path.abspath(os.path.expanduser(caminho))
-
-    def _walk_seguro(self, base):
-        """os.walk que ignora pastas irrelevantes para performance e segurança."""
+ 
+    def _walk_seguro(self, base: str):
+        """os.walk que ignora pastas de ambiente e arquivos ocultos."""
         for dirpath, dirnames, filenames in os.walk(base):
-            dirnames[:] = [d for d in dirnames if d not in self.ignore_folders and not d.startswith('.')]
+            dirnames[:] = [
+                d for d in dirnames
+                if d not in self.ignore_folders and not d.startswith(".")
+            ]
             yield dirpath, dirnames, filenames
-
-    # --- Manipulação de Arquivos e Pastas ---
-
-    def cria_pasta(self, caminho):
+ 
+    def _parse_nivel(self, nivel, atual: int = 50) -> int:
+        """
+        Converte o nível recebido (texto ou número) para inteiro entre 0 e 100.
+        Suporta: números, porcentagens, e termos como 'máximo', 'aumentar', etc.
+        """
+        if isinstance(nivel, (int, float)):
+            return max(0, min(100, int(nivel)))
+ 
+        s = str(nivel).strip().lower()
+ 
+        mapa_fixo = {
+            "máximo": 100, "maximo": 100, "max": 100,
+            "mínimo": 0,   "minimo": 0,   "min": 0,
+            "zero": 0,     "meio": 50,    "metade": 50,
+        }
+        if s in mapa_fixo:
+            return mapa_fixo[s]
+ 
+        if any(p in s for p in ("aument", "sobe", "mais", "alto")):
+            return min(100, atual + 20)
+        if any(p in s for p in ("diminu", "baixa", "menos", "desce")):
+            return max(0, atual - 20)
+ 
+        try:
+            return max(0, min(100, int(float(s.replace("%", "").strip()))))
+        except ValueError:
+            return atual  # retorna o valor atual se não conseguir interpretar
+ 
+    # ─────────────────────────────────────────
+    # ARQUIVOS E PASTAS
+    # ─────────────────────────────────────────
+ 
+    def cria_pasta(self, caminho: str) -> str:
         try:
             caminho_abs = self._resolver_caminho(caminho)
             os.makedirs(caminho_abs, exist_ok=True)
-            return f"Pasta criada com sucesso: {caminho_abs}"
+            return f"Pasta criada: {caminho_abs}"
         except Exception as e:
-            return f"Erro ao criar pasta: {str(e)}"
-
-    def abrir_pasta(self, nome_pasta):
-        """Tenta encontrar e abrir uma pasta pelo nome nos locais principais."""
+            return f"Erro ao criar pasta: {e}"
+ 
+    def abrir_pasta(self, nome_pasta: str) -> str:
+        """Localiza e abre uma pasta pelo nome nos diretórios base."""
         try:
-            # Caso o usuário passe o nome de um local conhecido
+            # Verifica se é um alias direto (ex: "desktop", "downloads")
             caminho_direto = self.base_folders.get(nome_pasta.lower())
             if caminho_direto and os.path.exists(caminho_direto):
                 os.startfile(caminho_direto)
                 return f"Abrindo {nome_pasta}."
-
-            # Busca recursiva nos locais base
-            for base_name, base_path in self.base_folders.items():
-                if base_name in ["area de trabalho", "documentos", "downloads"]:
-                    for dirpath, dirnames, _ in self._walk_seguro(base_path):
-                        for d in dirnames:
-                            if d.lower() == nome_pasta.lower():
-                                full_path = os.path.join(dirpath, d)
-                                os.startfile(full_path)
-                                return f"Pasta encontrada e aberta em: {full_path}"
-            
+ 
+            # Busca recursiva em todos os diretórios base (sem duplicatas)
+            for base_path in set(self.base_folders.values()):
+                for dirpath, dirnames, _ in self._walk_seguro(base_path):
+                    for d in dirnames:
+                        if d.lower() == nome_pasta.lower():
+                            full_path = os.path.join(dirpath, d)
+                            os.startfile(full_path)
+                            return f"Pasta encontrada e aberta: {full_path}"
+ 
             return f"Pasta '{nome_pasta}' não encontrada nos locais padrão."
         except Exception as e:
-            return f"Erro ao abrir pasta: {str(e)}"
-
-    def buscar_e_abrir_arquivo(self, nome_arquivo):
-        """Busca um arquivo por nome e abre o primeiro resultado."""
+            return f"Erro ao abrir pasta: {e}"
+ 
+    def buscar_e_abrir_arquivo(self, nome_arquivo: str) -> str:
+        """Busca um arquivo por nome (parcial) e abre o primeiro resultado."""
         try:
-            for _, base_path in self.base_folders.items():
+            for base_path in set(self.base_folders.values()):
                 for dirpath, _, filenames in self._walk_seguro(base_path):
                     for f in filenames:
                         if nome_arquivo.lower() in f.lower():
@@ -96,9 +147,20 @@ class JarvisControl:
                             return f"Arquivo encontrado e aberto: {full_path}"
             return f"Arquivo '{nome_arquivo}' não encontrado."
         except Exception as e:
-            return f"Erro ao buscar/abrir arquivo: {str(e)}"
-
-    def deletar_arquivo(self, caminho):
+            return f"Erro ao buscar arquivo: {e}"
+ 
+    def abrir_arquivo(self, caminho: str) -> str:
+        """Abre um arquivo pelo caminho direto."""
+        try:
+            path_abs = self._resolver_caminho(caminho)
+            if os.path.exists(path_abs):
+                os.startfile(path_abs)
+                return f"Abrindo: {path_abs}"
+            return f"Arquivo não encontrado: {path_abs}"
+        except Exception as e:
+            return f"Erro ao abrir arquivo: {e}"
+ 
+    def deletar_arquivo(self, caminho: str) -> str:
         try:
             path_abs = self._resolver_caminho(caminho)
             if os.path.isfile(path_abs):
@@ -106,177 +168,219 @@ class JarvisControl:
                 return f"Arquivo deletado: {path_abs}"
             elif os.path.isdir(path_abs):
                 shutil.rmtree(path_abs)
-                return f"Diretório deletado: {path_abs}"
+                return f"Pasta deletada: {path_abs}"
             return f"Caminho não encontrado: {path_abs}"
         except Exception as e:
-            return f"Erro ao deletar: {str(e)}"
-
-    def limpar_diretorio(self, caminho):
+            return f"Erro ao deletar: {e}"
+ 
+    def limpar_diretorio(self, caminho: str) -> str:
         try:
             path_abs = self._resolver_caminho(caminho)
-            if os.path.exists(path_abs):
-                for item in os.listdir(path_abs):
-                    item_path = os.path.join(path_abs, item)
-                    if os.path.isfile(item_path): os.remove(item_path)
-                    elif os.path.isdir(item_path): shutil.rmtree(item_path)
-                return f"Diretório limpo: {path_abs}"
-            return "Diretório não encontrado."
+            if not os.path.exists(path_abs):
+                return "Diretório não encontrado."
+            for item in os.listdir(path_abs):
+                item_path = os.path.join(path_abs, item)
+                if os.path.isfile(item_path):
+                    os.remove(item_path)
+                elif os.path.isdir(item_path):
+                    shutil.rmtree(item_path)
+            return f"Diretório limpo: {path_abs}"
         except Exception as e:
-            return f"Erro ao limpar diretório: {str(e)}"
-
-    def mover_item(self, origem, destino):
+            return f"Erro ao limpar diretório: {e}"
+ 
+    def mover_item(self, origem: str, destino: str) -> str:
         try:
             origem_abs = self._resolver_caminho(origem)
             destino_abs = self._resolver_caminho(destino)
             shutil.move(origem_abs, destino_abs)
-            return f"Movido de {origem_abs} para {destino_abs}."
+            return f"Movido para: {destino_abs}"
         except Exception as e:
-            return f"Erro ao mover: {str(e)}"
-
-    def copiar_item(self, origem, destino):
+            return f"Erro ao mover: {e}"
+ 
+    def copiar_item(self, origem: str, destino: str) -> str:
         try:
             origem_abs = self._resolver_caminho(origem)
             destino_abs = self._resolver_caminho(destino)
-            if os.path.isdir(origem_abs): shutil.copytree(origem_abs, destino_abs)
-            else: shutil.copy2(origem_abs, destino_abs)
-            return f"Copiado de {origem_abs} para {destino_abs}."
+            if os.path.isdir(origem_abs):
+                shutil.copytree(origem_abs, destino_abs)
+            else:
+                shutil.copy2(origem_abs, destino_abs)
+            return f"Copiado para: {destino_abs}"
         except Exception as e:
-            return f"Erro ao copiar: {str(e)}"
-
-    def renomear_item(self, caminho, novo_nome):
+            return f"Erro ao copiar: {e}"
+ 
+    def renomear_item(self, caminho: str, novo_nome: str) -> str:
         try:
             path_abs = self._resolver_caminho(caminho)
-            diretorio = os.path.dirname(path_abs)
-            novo_caminho = os.path.join(diretorio, novo_nome)
+            novo_caminho = os.path.join(os.path.dirname(path_abs), novo_nome)
             os.rename(path_abs, novo_caminho)
-            return f"Renomeado para {novo_nome}."
+            return f"Renomeado para: {novo_nome}"
         except Exception as e:
-            return f"Erro ao renomear: {str(e)}"
-
-    def organizar_pasta(self, caminho):
+            return f"Erro ao renomear: {e}"
+ 
+    def organizar_pasta(self, caminho: str) -> str:
+        """Organiza arquivos de uma pasta por tipo em subpastas."""
+        CATEGORIAS = {
+            "Imagens":      [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".svg"],
+            "Documentos":   [".pdf", ".doc", ".docx", ".txt", ".xlsx", ".pptx", ".csv", ".odt"],
+            "Videos":       [".mp4", ".mkv", ".avi", ".mov", ".wmv"],
+            "Musicas":      [".mp3", ".wav", ".flac", ".aac", ".ogg"],
+            "Compactados":  [".zip", ".rar", ".7z", ".tar", ".gz"],
+            "Executaveis":  [".exe", ".msi", ".bat", ".cmd"],
+            "Codigo":       [".py", ".js", ".ts", ".html", ".css", ".json", ".xml"],
+        }
         try:
             path_abs = self._resolver_caminho(caminho)
-            extensoes = {
-                'Imagens': ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp'],
-                'Documentos': ['.pdf', '.doc', '.docx', '.txt', '.xlsx', '.pptx', '.csv'],
-                'Videos': ['.mp4', '.mkv', '.avi', '.mov'],
-                'Musicas': ['.mp3', '.wav', '.flac'],
-                'Compactados': ['.zip', '.rar', '.7z'],
-                'Executaveis': ['.exe', '.msi', '.bat']
-            }
-
+            movidos = 0
             for item in os.listdir(path_abs):
                 item_path = os.path.join(path_abs, item)
-                if os.path.isfile(item_path):
-                    ext = os.path.splitext(item)[1].lower()
-                    movido = False
-                    for pasta, exts in extensoes.items():
-                        if ext in exts:
-                            pasta_destino = os.path.join(path_abs, pasta)
-                            os.makedirs(pasta_destino, exist_ok=True)
-                            shutil.move(item_path, os.path.join(pasta_destino, item))
-                            movido = True
-                            break
-                    if not movido:
-                        pasta_outros = os.path.join(path_abs, 'Outros')
-                        os.makedirs(pasta_outros, exist_ok=True)
-                        shutil.move(item_path, os.path.join(pasta_outros, item))
-            return "Pasta organizada com sucesso."
+                if not os.path.isfile(item_path):
+                    continue
+                ext = os.path.splitext(item)[1].lower()
+                categoria = next(
+                    (cat for cat, exts in CATEGORIAS.items() if ext in exts),
+                    "Outros"
+                )
+                pasta_destino = os.path.join(path_abs, categoria)
+                os.makedirs(pasta_destino, exist_ok=True)
+                shutil.move(item_path, os.path.join(pasta_destino, item))
+                movidos += 1
+            return f"Pasta organizada. {movidos} arquivo(s) classificado(s)."
         except Exception as e:
-            return f"Erro ao organizar pasta: {str(e)}"
-
-    def compactar_pasta(self, caminho):
+            return f"Erro ao organizar pasta: {e}"
+ 
+    def compactar_pasta(self, caminho: str) -> str:
         try:
-            path_abs = self._resolver_caminho(caminho).rstrip('/\\')
-            shutil.make_archive(path_abs, 'zip', path_abs)
+            path_abs = self._resolver_caminho(caminho).rstrip("/\\")
+            shutil.make_archive(path_abs, "zip", path_abs)
             return f"Compactado em: {path_abs}.zip"
         except Exception as e:
-            return f"Erro ao compactar: {str(e)}"
-
-    # --- Controle de Sistema ---
-
-    def controle_volume(self, nivel):
-        """Define o volume entre 0 e 100"""
+            return f"Erro ao compactar: {e}"
+ 
+    # ─────────────────────────────────────────
+    # CONTROLE DE SISTEMA
+    # ─────────────────────────────────────────
+ 
+    def controle_volume(self, nivel) -> str:
+        """
+        Ajusta o volume do sistema.
+        Aceita: número (0–100), porcentagem, ou texto ('máximo', 'aumentar', etc.).
+        """
         try:
-            nivel = max(0, min(100, int(nivel)))
-            import comtypes
-            comtypes.CoInitialize()
+            # Obtém volume atual para cálculos relativos (ex: "aumentar")
             devices = AudioUtilities.GetSpeakers()
-            volume = devices.EndpointVolume
-            volume.SetMasterVolumeLevelScalar(nivel / 100, None)
-            return f"Volume ajustado para {nivel}%."
+            interface = devices.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
+            volume_ctrl = cast(interface, POINTER(IAudioEndpointVolume))
+            atual = int(volume_ctrl.GetMasterVolumeLevelScalar() * 100)
+ 
+            novo = self._parse_nivel(nivel, atual)
+            volume_ctrl.SetMasterVolumeLevelScalar(novo / 100, None)
+            return f"Volume ajustado para {novo}%."
         except Exception as e:
-            return f"Erro ao ajustar volume: {str(e)}"
-
-    def controle_brilho(self, nivel):
-        """Define o brilho entre 0 e 100"""
+            return f"Erro ao ajustar volume: {e}"
+ 
+    def controle_brilho(self, nivel) -> str:
+        """
+        Ajusta o brilho da tela.
+        Aceita: número (0–100), porcentagem, ou texto ('máximo', 'diminuir', etc.).
+        """
         try:
-            nivel = max(0, min(100, int(nivel)))
-            sbc.set_brightness(nivel)
-            return f"Brilho ajustado para {nivel}%."
+            atual = sbc.get_brightness(display=0)
+            # get_brightness pode retornar lista
+            atual = atual[0] if isinstance(atual, list) else atual
+ 
+            novo = self._parse_nivel(nivel, atual)
+            sbc.set_brightness(novo)
+            return f"Brilho ajustado para {novo}%."
         except Exception as e:
-            return f"Erro ao ajustar brilho: {str(e)}"
-
-    def abrir_aplicativo(self, nome_app):
-        """Abre um aplicativo no sistema pelo nome."""
+            return f"Erro ao ajustar brilho: {e}"
+ 
+    def abrir_aplicativo(self, nome_app: str) -> str:
+        """Abre aplicativos conhecidos pelo nome (em português ou inglês)."""
+        APPS = {
+            # Utilitários do Windows
+            "bloco de notas": "notepad.exe",
+            "notepad":        "notepad.exe",
+            "calculadora":    "calc.exe",
+            "calculator":     "calc.exe",
+            "paint":          "mspaint.exe",
+            "cmd":            "cmd.exe",
+            "terminal":       "cmd.exe",
+            "explorador de arquivos": "explorer.exe",
+            "explorer":       "explorer.exe",
+            # Office (requer instalação)
+            "word":           "winword",
+            "excel":          "excel",
+            "powerpoint":     "powerpnt",
+            # Navegadores
+            "chrome":         "chrome",
+            "edge":           "msedge",
+            "firefox":        "firefox",
+            "navegador":      "msedge",
+            # Apps populares (requer instalação)
+            "spotify":        "spotify",
+            "vscode":         "code",
+            "vs code":        "code",
+            "discord":        "discord",
+            "telegram":       "telegram",
+            "whatsapp":       "whatsapp",
+            # Configurações
+            "configuracoes":  "ms-settings:",
+            "configurações":  "ms-settings:",
+        }
+ 
+        chave = nome_app.strip().lower()
+        comando = APPS.get(chave)
+ 
         try:
-            apps = {
-                "bloco de notas": "notepad.exe",
-                "calculadora": "calc.exe",
-                "paint": "mspaint.exe",
-                "cmd": "cmd.exe",
-                "navegador": "start msedge",
-                "word": "start winword",
-                "excel": "start excel",
-                "powerpoint": "start powerpnt",
-                "explorador de arquivos": "explorer.exe",
-                "configuracoes": "start ms-settings:"
-            }
-            comando = apps.get(nome_app.lower())
             if comando:
-                if comando.startswith("start "):
-                    executavel = comando.replace("start ", "", 1).strip()
-                    try: os.startfile(executavel)
-                    except: subprocess.Popen(['cmd', '/c', 'start', '', executavel], shell=True)
+                # URIs do Windows (ms-settings:, etc.) usam startfile
+                if ":" in comando and not comando.endswith(".exe"):
+                    os.startfile(comando)
                 else:
-                    subprocess.Popen(comando, shell=False)
+                    subprocess.Popen([comando], shell=False)
                 return f"Abrindo {nome_app}."
             else:
-                try: os.startfile(nome_app)
-                except: subprocess.Popen(['cmd', '/c', 'start', '', nome_app], shell=True)
-                return f"Tentando abrir {nome_app}."
+                # Tentativa direta com o nome fornecido (sem shell=True por segurança)
+                subprocess.Popen([nome_app], shell=False)
+                return f"Tentando abrir '{nome_app}'."
         except Exception as e:
-            return f"Erro ao abrir aplicativo: {str(e)}"
-
-    def energia_pc(self, acao):
+            return f"Erro ao abrir '{nome_app}': {e}"
+ 
+    def energia_pc(self, acao: str) -> str:
+        """Controla a energia do PC. Ações: 'desligar', 'reiniciar', 'bloquear'."""
+        ACOES = {
+            "desligar":  ["shutdown", "/s", "/t", "1"],
+            "reiniciar": ["shutdown", "/r", "/t", "1"],
+            "bloquear":  ["rundll32.exe", "user32.dll,LockWorkStation"],
+        }
+        acao = acao.strip().lower()
+        comando = ACOES.get(acao)
+ 
+        if not comando:
+            return f"Ação inválida: '{acao}'. Use 'desligar', 'reiniciar' ou 'bloquear'."
+ 
         try:
-            if acao == "desligar":
-                os.system("shutdown /s /t 1")
-                return "Desligando o computador."
-            elif acao == "reiniciar":
-                os.system("shutdown /r /t 1")
-                return "Reiniciando o computador."
-            elif acao == "bloquear":
-                subprocess.run(["rundll32.exe", "user32.dll,LockWorkStation"])
-                return "Computador bloqueado."
-            return "Ação inválida."
+            subprocess.run(comando, check=True)
+            mensagens = {
+                "desligar":  "Desligando o computador.",
+                "reiniciar": "Reiniciando o computador.",
+                "bloquear":  "Computador bloqueado.",
+            }
+            return mensagens[acao]
         except Exception as e:
-            return f"Erro: {str(e)}"
-
-    def abrir_arquivo(self, caminho):
-        """Abre um arquivo pelo caminho completo."""
-        try:
-            path_abs = self._resolver_caminho(caminho)
-            if os.path.exists(path_abs):
-                os.startfile(path_abs)
-                return f"Abrindo arquivo {path_abs}."
-            return f"Arquivo não encontrado: {path_abs}"
-        except Exception as e:
-            return f"Erro ao abrir arquivo: {str(e)}"
-
+            return f"Erro ao executar '{acao}': {e}"
+ 
+ 
+# ─────────────────────────────────────────
+# TESTE RÁPIDO (execução direta)
+# ─────────────────────────────────────────
+ 
 if __name__ == "__main__":
-    # Teste rápido de caminhos dinâmicos
-    user_home = os.path.expanduser('~')
-    print(f"Home do usuário detectada: {user_home}")
     jarvis = JarvisControl()
-    # jarvis.atalhos_navegacao("github")
+    print(f"Home detectada: {jarvis.home}")
+    print(f"Desktop: {jarvis.desktop}")
+ 
+    # Testa parser de nível
+    for entrada in [50, "80%", "máximo", "aumentar", "diminuir", "zero", "abc"]:
+        print(f"  _parse_nivel({entrada!r}) = {jarvis._parse_nivel(entrada)}")
